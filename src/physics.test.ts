@@ -1,0 +1,20 @@
+import {describe,it,expect} from 'vitest';
+import {DT,initial,step,target,FixedClock,score,sampleAt,signedArea,csv,areaReference,bikeTarget} from './physics';
+describe('physics',()=>{
+ it('constant displacement produces zero derivatives',()=>{let s=initial();for(let i=0;i<240;i++)s=step(s,'displacement',0);expect(s.v).toBe(0);expect(s.a).toBe(0);});
+ it('constant velocity integrates to a line',()=>{let s=initial();for(let i=0;i<1200;i++)s=step(s,'velocity',3);expect(s.x).toBeCloseTo(30,9);expect(s.v).toBe(3);});
+ it('constant acceleration matches the analytic solution',()=>{let s=initial();for(let i=0;i<1200;i++)s=step(s,'acceleration',2);expect(s.x).toBeCloseTo(100,8);expect(s.v).toBeCloseTo(20,9);});
+ it('zero thrust preserves velocity',()=>{const s=step({t:0,x:3,v:4,a:2},'acceleration',0,2);expect(s.x).toBe(11);expect(s.v).toBe(4);});
+ it('sine derivatives have the correct phase and magnitude',()=>{const w=Math.PI/4;expect(target(0).v).toBeCloseTo(6*w);expect(target(2).v).toBeCloseTo(0);expect(target(2).a).toBeCloseTo(-6*w*w);expect(target(4).v).toBeCloseTo(-6*w);});
+ it('filtered sampled sine derivatives converge with bounded error',()=>{let s=initial();let v2=0,a2=0,n=0;for(let i=1;i<=2400;i++){const ref=target(i*DT);s=step(s,'displacement',ref.x);if(i>240){v2+=(s.v-ref.v)**2;a2+=(s.a-ref.a)**2;n++;}}expect(Math.sqrt(v2/n)).toBeLessThan(.3);expect(Math.sqrt(a2/n)).toBeLessThan(.3);});
+ it('steady sampled ramp settles to stable derivatives',()=>{let s=initial();for(let i=1;i<=1200;i++)s=step(s,'displacement',i*DT*2);expect(s.v).toBeCloseTo(2,6);expect(s.a).toBeCloseTo(0,6);});
+ it('velocity jumps are delta-v impulses, never finite acceleration',()=>{const s=step(initial(),'velocity',3);expect(s.dv).toBe(3);expect(s.a).toBe(0);const q=step(s,'velocity',-3);expect(q.dv).toBe(-6);expect(q.a).toBe(0);expect(step(q,'velocity',-3).dv).toBeUndefined();});
+ it('integrates signed areas including clipped intervals',()=>{const ss=Array.from({length:961},(_,i)=>areaReference(i*DT,'mixed','v'));expect(signedArea(ss,'v',0,8)).toBeCloseTo(0);expect(signedArea(ss,'v',4,8)).toBeCloseTo(-8);expect(signedArea(ss,'v',.125,3.75)).toBeCloseTo((4*3.75-.5*3.75**2)-(4*.125-.5*.125**2));});
+ it('rectangle and triangle areas agree with displacement changes',()=>{for(const shape of ['rectangle','triangle']){const ss=Array.from({length:361},(_,i)=>areaReference(i*DT,shape,'v'));expect(signedArea(ss,'v',0,3)).toBeCloseTo(shape==='rectangle'?12:4.5);}});
+ it('acceleration area agrees with velocity change',()=>{const ss=Array.from({length:361},(_,i)=>areaReference(i*DT,'triangle','a'));expect(signedArea(ss,'a',0,3)).toBeCloseTo(ss.at(-1)!.v);});
+ it('records synchronized samples and round-trips replay',()=>{const ss=[initial()];for(let i=0;i<120;i++)ss.push(step(ss.at(-1)!,'acceleration',2));const loaded=JSON.parse(JSON.stringify(ss));expect(sampleAt(loaded,.5)).toEqual(ss[60]);expect(ss[120].t).toBeCloseTo(1);expect(csv(ss).split('\n')[0]).toContain('impulse_delta_v');});
+ it('pause does not accumulate phantom time',()=>{const c=new FixedClock();let ticks=0;const tick=()=>ticks++;c.advance(.05,true,1,tick);expect(ticks).toBe(6);c.advance(10,false,1,tick);expect(ticks).toBe(6);c.advance(.05,true,1,tick);expect(ticks).toBe(12);});
+ it('clock produces the same result at different frame rates',()=>{function run(fps:number){const c=new FixedClock();let s=initial();for(let i=0;i<fps*2;i++)c.advance(1/fps,true,1,()=>{s=step(s,'acceleration',2);});return s;}expect(run(30)).toEqual(run(60));expect(run(60)).toEqual(run(144));});
+ it('scoring rewards exact tracking and penalizes errors',()=>{const ss=Array.from({length:120},(_,i)=>target(i/10));expect(score(ss,target)).toBe(100);expect(score(ss.map(s=>({...s,x:s.x+6})),target)).toBe(50);expect(score([],target)).toBe(0);});
+ it('bike reference integrates piecewise constant commands continuously',()=>{expect(bikeTarget(2).x).toBe(6);expect(bikeTarget(4).x).toBe(6);expect(bikeTarget(6).x).toBe(0);expect(bikeTarget(4).v).toBe(-3);});
+});
